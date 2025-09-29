@@ -1,0 +1,9 @@
+files:
+  datasets:
+    input:
+      base_path: "files/datasets/input"
+      spain_league_csv: "files/datasets/input/SP1.csv"
+    output:
+      base_path: "files/datasets/output"
+    execution:
+      base_path: "files/datasets/execution"
