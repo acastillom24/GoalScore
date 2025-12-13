@@ -39,75 +39,31 @@ class DataProcessor:
 
     @staticmethod
     def load_matches(path: str) -> pd.DataFrame:
-        """Load and preprocess match data from CSV file.
-
-        Expected columns: Date, HomeTeam, AwayTeam, FTHG, FTAG
-        (Based on football-data.co.uk format)
-        """
+        """Load and preprocess match data from CSV file."""
         try:
             df = pd.read_csv(path)
-
-            # Standardize column names
             column_mapping = {
                 "Date": "date",
                 "HomeTeam": "home_team",
                 "AwayTeam": "away_team",
                 "FTHG": "home_goals",
                 "FTAG": "away_goals",
-                "HG": "home_goals",  # Alternative naming
-                "AG": "away_goals",  # Alternative naming
+                "HG": "home_goals",
+                "AG": "away_goals",
             }
-
             df = df.rename(columns=column_mapping)
-
-            # Parse dates
             df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
-
-            # Sort by date
             df = df.sort_values("date").reset_index(drop=True)
-
-            # Remove rows with missing essential data
             df = df.dropna(
                 subset=["date", "home_team", "away_team", "home_goals", "away_goals"]
             )
-
             print(
                 f"Loaded {len(df)} matches from {df['date'].min()} to {df['date'].max()}"
             )
             print(f"Teams found: {sorted(df['home_team'].unique())}")
-
             return df
-
         except Exception as e:
             raise ValueError(f"Error loading data from {path}: {str(e)}")
-
-    @staticmethod
-    def get_team_stats(matches: pd.DataFrame, team: str, last_n: int = 10) -> Dict:
-        """Get recent statistics for a team."""
-        home_matches = matches[matches["home_team"] == team].tail(last_n // 2)
-        away_matches = matches[matches["away_team"] == team].tail(last_n // 2)
-
-        home_goals_scored = (
-            home_matches["home_goals"].mean() if len(home_matches) > 0 else 1.0
-        )
-        home_goals_conceded = (
-            home_matches["away_goals"].mean() if len(home_matches) > 0 else 1.0
-        )
-        away_goals_scored = (
-            away_matches["away_goals"].mean() if len(away_matches) > 0 else 1.0
-        )
-        away_goals_conceded = (
-            away_matches["home_goals"].mean() if len(away_matches) > 0 else 1.0
-        )
-
-        return {
-            "goals_scored_home": home_goals_scored,
-            "goals_conceded_home": home_goals_conceded,
-            "goals_scored_away": away_goals_scored,
-            "goals_conceded_away": away_goals_conceded,
-            "total_goals_scored": (home_goals_scored + away_goals_scored) / 2,
-            "total_goals_conceded": (home_goals_conceded + away_goals_conceded) / 2,
-        }
 
 
 # =============================================================================
@@ -145,16 +101,13 @@ class EloRatingModel:
             home_goals = match["home_goals"]
             away_goals = match["away_goals"]
 
-            # Current ratings
             home_rating = self.ratings[home_team]
             away_rating = self.ratings[away_team]
 
-            # Expected scores
             expected_home = 1 / (
                 1 + 10 ** (-(home_rating - away_rating + self.home_advantage) / 400)
             )
 
-            # Actual scores
             if home_goals > away_goals:
                 actual_home = 1.0
             elif home_goals < away_goals:
@@ -162,12 +115,10 @@ class EloRatingModel:
             else:
                 actual_home = 0.5
 
-            # Update ratings
             rating_change = self.k_factor * (actual_home - expected_home)
             self.ratings[home_team] += rating_change
             self.ratings[away_team] -= rating_change
 
-            # Store history
             self.history.append(
                 {
                     "date": match["date"],
@@ -193,10 +144,9 @@ class EloRatingModel:
         expected_home = 1 / (
             1 + 10 ** (-(home_rating - away_rating + self.home_advantage) / 400)
         )
-        expected_draw = 0.3  # Simple approximation
+        expected_draw = 0.3
         expected_away = 1 - expected_home
 
-        # Adjust for draw probability
         expected_home *= 0.7
         expected_away *= 0.7
 
@@ -210,125 +160,97 @@ class EloRatingModel:
         }
 
 
-class PoissonGoalsModel:
-    """Poisson regression model for predicting goal counts."""
+class SimplifiedPoissonModel:
+    """Simplified Poisson model using team averages (robust for small datasets)."""
 
     def __init__(self):
-        self.home_model = None
-        self.away_model = None
-        self.teams = None
-        self.team_index = None
+        self.team_stats = {}
+        self.league_avg_home = 1.4
+        self.league_avg_away = 1.1
         self.is_fitted = False
 
-    def prepare_data(self, matches: pd.DataFrame):
-        """Prepare design matrices for Poisson regression."""
-        self.teams = sorted(
-            pd.unique(matches[["home_team", "away_team"]].values.ravel())
-        )
-        self.team_index = {team: i for i, team in enumerate(self.teams)}
-        n_teams = len(self.teams)
-        n_matches = len(matches)
-
-        # Design matrix for home goals: intercept + home attack + away defense
-        X_home = np.zeros((n_matches, 2 * n_teams + 1))
-        y_home = matches["home_goals"].values
-
-        # Design matrix for away goals: intercept + away attack + home defense
-        X_away = np.zeros((n_matches, 2 * n_teams + 1))
-        y_away = matches["away_goals"].values
-
-        for i, (_, match) in enumerate(matches.iterrows()):
-            home_idx = self.team_index[match["home_team"]]
-            away_idx = self.team_index[match["away_team"]]
-
-            # Home goals model
-            X_home[i, 0] = 1  # intercept
-            X_home[i, 1 + home_idx] = 1  # home attack
-            X_home[i, 1 + n_teams + away_idx] = 1  # away defense
-
-            # Away goals model
-            X_away[i, 0] = 1  # intercept
-            X_away[i, 1 + away_idx] = 1  # away attack
-            X_away[i, 1 + n_teams + home_idx] = 1  # home defense
-
-        return X_home, y_home, X_away, y_away
-
     def fit(self, matches: pd.DataFrame):
-        """Fit Poisson regression models for home and away goals."""
-        X_home, y_home, X_away, y_away = self.prepare_data(matches)
-
+        """Fit model using team-specific goal averages."""
         try:
-            self.home_model = sm.GLM(y_home, X_home, family=sm.families.Poisson()).fit()
-            self.away_model = sm.GLM(y_away, X_away, family=sm.families.Poisson()).fit()
+            teams = pd.unique(matches[["home_team", "away_team"]].values.ravel())
+            
+            for team in teams:
+                home_matches = matches[matches["home_team"] == team]
+                away_matches = matches[matches["away_team"] == team]
+                
+                # Calculate averages with minimum match requirement
+                if len(home_matches) >= 2:
+                    goals_scored_home = home_matches["home_goals"].mean()
+                    goals_conceded_home = home_matches["away_goals"].mean()
+                else:
+                    goals_scored_home = self.league_avg_home
+                    goals_conceded_home = self.league_avg_away
+                
+                if len(away_matches) >= 2:
+                    goals_scored_away = away_matches["away_goals"].mean()
+                    goals_conceded_away = away_matches["home_goals"].mean()
+                else:
+                    goals_scored_away = self.league_avg_away
+                    goals_conceded_away = self.league_avg_home
+                
+                self.team_stats[team] = {
+                    "attack_home": goals_scored_home,
+                    "defense_home": goals_conceded_home,
+                    "attack_away": goals_scored_away,
+                    "defense_away": goals_conceded_away,
+                }
+            
+            # Calculate league averages
+            self.league_avg_home = matches["home_goals"].mean()
+            self.league_avg_away = matches["away_goals"].mean()
+            
             self.is_fitted = True
-
-            print(f"Poisson model fitted successfully")
-            print(f"Home model AIC: {self.home_model.aic:.2f}")
-            print(f"Away model AIC: {self.away_model.aic:.2f}")
-
+            print(f"✓ Simplified Poisson model fitted successfully")
+            print(f"  League averages: Home {self.league_avg_home:.2f}, Away {self.league_avg_away:.2f}")
+            
         except Exception as e:
-            print(f"Error fitting Poisson model: {str(e)}")
+            print(f"✗ Error fitting model: {str(e)}")
             self.is_fitted = False
 
     def predict_match(self, home_team: str, away_team: str, max_goals: int = 8) -> Dict:
-        """Predict goals and match outcomes for a specific match."""
+        """Predict goals and match outcomes."""
         if not self.is_fitted:
             raise ValueError("Model must be fitted before making predictions")
 
-        if home_team not in self.team_index or away_team not in self.team_index:
-            # Use league averages for unknown teams
-            lambda_home = 1.4
-            lambda_away = 1.1
-        else:
-            # Build design matrices for this match
-            n_teams = len(self.teams)
-            home_idx = self.team_index[home_team]
-            away_idx = self.team_index[away_team]
+        # Get team stats or use league averages
+        home_stats = self.team_stats.get(home_team, {
+            "attack_home": self.league_avg_home,
+            "defense_home": self.league_avg_away
+        })
+        away_stats = self.team_stats.get(away_team, {
+            "attack_away": self.league_avg_away,
+            "defense_away": self.league_avg_home
+        })
 
-            X_home = np.zeros((1, 2 * n_teams + 1))
-            X_home[0, 0] = 1
-            X_home[0, 1 + home_idx] = 1
-            X_home[0, 1 + n_teams + away_idx] = 1
+        # Calculate expected goals using attack vs defense
+        lambda_home = (home_stats["attack_home"] + away_stats["defense_away"]) / 2
+        lambda_away = (away_stats["attack_away"] + home_stats["defense_home"]) / 2
 
-            X_away = np.zeros((1, 2 * n_teams + 1))
-            X_away[0, 0] = 1
-            X_away[0, 1 + away_idx] = 1
-            X_away[0, 1 + n_teams + home_idx] = 1
-
-            lambda_home = float(self.home_model.predict(X_home)[0])
-            lambda_away = float(self.away_model.predict(X_away)[0])
-
-        # Calculate match outcome probabilities
+        # Calculate outcome probabilities using Poisson distribution
+        from scipy.stats import poisson
+        
         prob_matrix = np.zeros((max_goals + 1, max_goals + 1))
         for i in range(max_goals + 1):
             for j in range(max_goals + 1):
-                prob_matrix[i, j] = poisson.pmf(i, lambda_home) * poisson.pmf(
-                    j, lambda_away
-                )
+                prob_matrix[i, j] = poisson.pmf(i, lambda_home) * poisson.pmf(j, lambda_away)
 
-        # Calculate outcome probabilities
-        p_home_win = np.sum(
-            [
-                prob_matrix[i, j]
-                for i in range(max_goals + 1)
-                for j in range(max_goals + 1)
-                if i > j
-            ]
-        )
+        p_home_win = np.sum([prob_matrix[i, j] 
+                            for i in range(max_goals + 1) 
+                            for j in range(max_goals + 1) if i > j])
         p_draw = np.sum([prob_matrix[i, i] for i in range(max_goals + 1)])
         p_away_win = 1 - p_home_win - p_draw
 
-        # Calculate total goals probabilities
         total_goals_probs = {}
         for total in range(2 * max_goals + 1):
-            prob = np.sum(
-                [
-                    prob_matrix[i, j]
-                    for i in range(max_goals + 1)
-                    for j in range(max_goals + 1)
-                    if i + j == total
-                ]
-            )
+            prob = np.sum([prob_matrix[i, j]
+                          for i in range(max_goals + 1)
+                          for j in range(max_goals + 1)
+                          if i + j == total])
             total_goals_probs[total] = prob
 
         return {
@@ -357,12 +279,10 @@ class MonteCarloSimulator:
         away_goals = rng.poisson(lambda_away, self.n_simulations)
         total_goals = home_goals + away_goals
 
-        # Calculate probabilities
         home_wins = np.mean(home_goals > away_goals)
         draws = np.mean(home_goals == away_goals)
         away_wins = np.mean(home_goals < away_goals)
 
-        # Goal interval analysis
         goal_intervals = {
             "under_1_5": np.mean(total_goals < 1.5),
             "under_2_5": np.mean(total_goals < 2.5),
@@ -381,9 +301,7 @@ class MonteCarloSimulator:
             "expected_total_goals": total_goals.mean(),
             "goal_intervals": goal_intervals,
             "total_goals_std": total_goals.std(),
-            "simulated_scores": list(
-                zip(home_goals[:10], away_goals[:10])
-            ),  # Sample results
+            "simulated_scores": list(zip(home_goals[:10], away_goals[:10])),
         }
 
 
@@ -399,7 +317,7 @@ class FootballPredictor:
         self.data_path = data_path
         self.matches = None
         self.elo_model = EloRatingModel()
-        self.poisson_model = PoissonGoalsModel()
+        self.poisson_model = SimplifiedPoissonModel()  # Using simplified version
         self.monte_carlo = MonteCarloSimulator()
         self.is_trained = False
 
@@ -416,32 +334,36 @@ class FootballPredictor:
         if self.matches is None:
             raise ValueError("No data loaded. Use load_data() first.")
 
-        print("Training Elo ratings...")
+        print("\n" + "=" * 60)
+        print("TRAINING MODELS")
+        print("=" * 60)
+        
+        print("\n1. Training Elo ratings...")
         self.elo_model.update_ratings(self.matches)
+        print(f"   ✓ {len(self.elo_model.ratings)} teams rated")
 
-        print("Training Poisson model...")
+        print("\n2. Training Poisson model...")
         self.poisson_model.fit(self.matches)
 
-        self.is_trained = True
-        print("All models trained successfully!")
+        if self.poisson_model.is_fitted:
+            self.is_trained = True
+            print("\n" + "=" * 60)
+            print("✓ ALL MODELS TRAINED SUCCESSFULLY!")
+            print("=" * 60)
+        else:
+            raise ValueError("Failed to train Poisson model")
 
-    def predict_match(
-        self, home_team: str, away_team: str, detailed: bool = True
-    ) -> Dict:
+    def predict_match(self, home_team: str, away_team: str, detailed: bool = True) -> Dict:
         """Predict match outcome with goal intervals."""
         if not self.is_trained:
             raise ValueError("Models must be trained first. Use train_all_models().")
 
-        # Get predictions from all models
         elo_pred = self.elo_model.predict_match_outcome(home_team, away_team)
         poisson_pred = self.poisson_model.predict_match(home_team, away_team)
-
-        # Monte Carlo simulation
         mc_pred = self.monte_carlo.simulate_match(
             poisson_pred["lambda_home"], poisson_pred["lambda_away"]
         )
 
-        # Combine predictions
         prediction = {
             "match": f"{home_team} vs {away_team}",
             "expected_goals": {
@@ -450,30 +372,17 @@ class FootballPredictor:
                 "total": round(poisson_pred["expected_total_goals"], 2),
             },
             "outcome_probabilities": {
-                "home_win": round(
-                    (elo_pred["home_win_prob"] + mc_pred["home_win_prob"]) / 2, 3
-                ),
+                "home_win": round((elo_pred["home_win_prob"] + mc_pred["home_win_prob"]) / 2, 3),
                 "draw": round((elo_pred["draw_prob"] + mc_pred["draw_prob"]) / 2, 3),
-                "away_win": round(
-                    (elo_pred["away_win_prob"] + mc_pred["away_win_prob"]) / 2, 3
-                ),
+                "away_win": round((elo_pred["away_win_prob"] + mc_pred["away_win_prob"]) / 2, 3),
             },
             "goal_intervals": mc_pred["goal_intervals"],
             "confidence_interval": {
                 "total_goals_mean": round(mc_pred["expected_total_goals"], 2),
                 "total_goals_std": round(mc_pred["total_goals_std"], 2),
                 "likely_range": (
-                    max(
-                        0,
-                        round(
-                            mc_pred["expected_total_goals"]
-                            - mc_pred["total_goals_std"],
-                            1,
-                        ),
-                    ),
-                    round(
-                        mc_pred["expected_total_goals"] + mc_pred["total_goals_std"], 1
-                    ),
+                    max(0, round(mc_pred["expected_total_goals"] - mc_pred["total_goals_std"], 1)),
+                    round(mc_pred["expected_total_goals"] + mc_pred["total_goals_std"], 1),
                 ),
             },
         }
@@ -497,7 +406,6 @@ class FootballPredictor:
     def get_goal_recommendations(self, home_team: str, away_team: str) -> Dict:
         """Get betting recommendations based on goal predictions."""
         pred = self.predict_match(home_team, away_team)
-
         intervals = pred["goal_intervals"]
         expected_total = pred["expected_goals"]["total"]
 
@@ -508,12 +416,7 @@ class FootballPredictor:
                 "over_2_5": "YES" if intervals["over_2_5"] > 0.55 else "NO",
                 "under_2_5": "YES" if intervals["under_2_5"] > 0.55 else "NO",
                 "over_1_5": "YES" if intervals["over_1_5"] > 0.70 else "NO",
-                "btts": (
-                    "YES"
-                    if pred["expected_goals"]["home"] > 0.8
-                    and pred["expected_goals"]["away"] > 0.8
-                    else "NO"
-                ),
+                "btts": "YES" if pred["expected_goals"]["home"] > 0.8 and pred["expected_goals"]["away"] > 0.8 else "NO",
             },
             "probabilities": {
                 "over_2_5": f"{intervals['over_2_5']:.1%}",
