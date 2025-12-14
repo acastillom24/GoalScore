@@ -1,7 +1,7 @@
 import yaml
 
 
-def load_config(config_path: str) -> dict:
+def load_config(is_prod: bool = False) -> dict:
     """
     Carga un archivo de configuración YAML.
 
@@ -11,6 +11,12 @@ def load_config(config_path: str) -> dict:
     Returns:
         dict: Contenido del archivo YAML como diccionario
     """
+
+    if is_prod:
+        config_path = "conf/config_prod.yaml"
+    else:
+        config_path = "conf/config_dev.yaml"
+
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
     return config

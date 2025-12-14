@@ -7,3 +7,62 @@ files:
       base_path: "files/datasets/output"
     execution:
       base_path: "files/datasets/execution"
+
+configuration:
+  league_codes:
+    spain: "SP1" # La Liga (Primera División)
+    england: "E0" # Premier League
+    germany: "D1" # Bundesliga
+    italy: "I1" # Serie A
+    france: "F1" # Ligue 1
+    netherlands: "N1" # Eredivisie
+    portugal: "P1" # Primeira Liga
+    belgium: "B1" # Pro League
+    turkey: "T1" # Süper Lig
+    greece: "G1" # Super League
+
+mapping_teams:
+  spain:
+    "Real Oviedo": "Oviedo"
+    "RCD Espanyol": "Espanyol"
+    "R.C.D. Mallorca": "Mallorca"
+    "Real Betis": "Betis"
+    "Atlético Madrid": "Ath Madrid"
+    "Elche C. F.": "Elche"
+    "Athletic": "Ath Bilbao"
+    "Celta de Vigo": "Celta"
+    "Real Sociedad": "Sociedad"
+    "Alavés": "Alaves"
+    "Valencia C. F.": "Valencia"
+  england:
+    "Man Utd": "Manchester United"
+
+matches_teams:
+  spain:
+    home_team: 
+      - "Real Sociedad"
+      - "Atlético Madrid"
+      - "R.C.D. Mallorca"
+      - "Barcelona"
+      - "Getafe"
+      - "Sevilla"
+      - "Celta de Vigo"
+      - "Levante"
+      - "Alavés"
+      - "Rayo Vallecano"
+    away_team: 
+      - "Girona"
+      - "Valencia C. F."
+      - "Elche C. F."
+      - "Osasuna"
+      - "RCD Espanyol"
+      - "Real Oviedo"
+      - "Athletic"
+      - "Villarreal"
+      - "Real Madrid"
+      - "Real Betis"
+  england:
+    home_team: 
+    - "Arsenal"
+    away_team: 
+    - "Tottenham"
